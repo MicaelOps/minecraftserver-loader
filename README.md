@@ -10,5 +10,9 @@ Main Goals:
 - Implmenting Plugin system for c++ plugins
 - Learning network systems
 
+Needs & Wants:
 
+- Stress test
+- Hack my own server
+  
 Documentation will be added later.
