@@ -1,3 +1,0 @@
-C:/Users/Micael Cossa/CLionProjects/minecraftserver/cmake-build-debug/CMakeFiles/minecraftserver.dir
-C:/Users/Micael Cossa/CLionProjects/minecraftserver/cmake-build-debug/CMakeFiles/edit_cache.dir
-C:/Users/Micael Cossa/CLionProjects/minecraftserver/cmake-build-debug/CMakeFiles/rebuild_cache.dir
