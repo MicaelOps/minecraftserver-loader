@@ -2,24 +2,25 @@
 // Created by Micael Cossa on 26/07/2025.
 //
 
-
+#include <memory>
 #include "server_handler.h"
 #include "server_utils.h"
+#include "server_connection.h"
 #include "packets/HandshakePacket.h"
 
 
 
 
-//constexpr std::unordered_map<int, Packet> packet_handler;
-//constexpr std::unordered_set<player> players;
+// std::unordered_map<int, Packet> packet_handler;
+// std::unordered_set<player> players;
 
-Packet* (*packetFactory[256])() = {nullptr};
+std::unique_ptr<Packet> (*packetFactory[256])() = {nullptr};
 
 void setupPacketFactory() {
-    packetFactory[0] = [] () -> Packet* { return new HandshakePacket(); };
+    packetFactory[0] = [] () -> std::unique_ptr<Packet> { return std::make_unique<HandshakePacket>(); };
 }
 
-void invokePacket(PacketBuffer* packetBuffer, QUEUED_CONNECTION_CONTEXT* connectionContext) {
+void invokePacket(PacketBuffer* packetBuffer, PLAYER_CONNECTION_CONTEXT* connectionContext) {
 
     int packetId = packetBuffer->readVarInt();
 
@@ -28,11 +29,10 @@ void invokePacket(PacketBuffer* packetBuffer, QUEUED_CONNECTION_CONTEXT* connect
         return;
     }
 
-    Packet* packet = packetFactory[packetId]();
+    std::unique_ptr<Packet> packet = packetFactory[packetId]();
     packet->readFromBuffer(packetBuffer);
-    packet->handlePacket(connectionContext);
+    packet->handlePacket(connectionContext->playerSocket);
 
-    delete packet;
 }
 
 /**
@@ -43,11 +43,13 @@ void invokePacket(PacketBuffer* packetBuffer, QUEUED_CONNECTION_CONTEXT* connect
  * @param packet
  * @param connectionContext
  */
-void sendPacket(Packet* packet, QUEUED_CONNECTION_CONTEXT* connectionContext) {
+void sendPacket(Packet* packet, SOCKET playerSocket) {
 
-    PacketBuffer packetBuffer;
-    packet->writeToBuffer(&packetBuffer);
-    packetBuffer.readjustBufferSize();
-    packetBuffer.writeVarInt(packetBuffer.bufferSize);
-    sendDataToConnection(&packetBuffer, connectionContext);
+    std::unique_ptr<PacketBuffer> packetBuffer = std::make_unique<VectorBuffer>();
+
+    packet->writeToBuffer(packetBuffer.get()); // write data + packet id
+    packetBuffer->writeVarIntAttheBack(packetBuffer->getSize()); // write packet size var int as the first byte
+    sendDataToConnection(packetBuffer.get(), playerSocket);
+
+
 }

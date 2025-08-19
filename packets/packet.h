@@ -27,7 +27,7 @@ public:
 
     virtual void writeToBuffer(PacketBuffer* packetBuffer);
 
-    virtual void handlePacket(QUEUED_CONNECTION_CONTEXT* connectionContext);
+    virtual void handlePacket(SOCKET playerSocket);
 };
 
 

@@ -19,7 +19,7 @@ public:
 
     void readFromBuffer(PacketBuffer* packetBuffer) override;
 
-    void handlePacket(QUEUED_CONNECTION_CONTEXT* connectionContext) override;
+    void handlePacket(SOCKET playerSocket) override;
 
     void writeToBuffer(PacketBuffer* packetBuffer) override;
 

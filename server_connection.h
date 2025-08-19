@@ -1,5 +1,5 @@
 //
-// Created by Micael Cossa on 18/07/2025.
+// Created by Micael Cossa on 07/08/2025.
 //
 
 #ifndef MINECRAFTSERVER_SERVER_CONNECTION_H
@@ -10,27 +10,43 @@
 #include "concurrent_unordered_set.h"
 #include "packet_buf.h"
 
-enum CONNECTION_STATE {
-    ACCEPT, HANDSHAKING, PLAY
+#pragma comment(lib, "Ws2_32.lib")
+
+
+enum CONNECTION_CONTEXT_TYPE {
+    ACCEPT, RECEIVE, SEND
 };
-struct SERVER_CONNECTION {
-    HANDLE listenport;
-    concurrent_unordered_set<SOCKET> connections;
+struct IO_SERVER_CONNECTION_THREAD_PARAM {
+    SOCKET listenSocket;
+    HANDLE listenPort;
 };
 
-struct QUEUED_CONNECTION_CONTEXT {
-    SERVER_CONNECTION* connection = nullptr;
-    CONNECTION_STATE state = ACCEPT;
+
+struct PLAYER_CONNECTION_CONTEXT {
+
+    explicit PLAYER_CONNECTION_CONTEXT() = default;
+
+    PLAYER_CONNECTION_CONTEXT(const PLAYER_CONNECTION_CONTEXT&) = delete;
+    PLAYER_CONNECTION_CONTEXT& operator=(const PLAYER_CONNECTION_CONTEXT&) = delete;
+
+    ~PLAYER_CONNECTION_CONTEXT() {
+        printf("player connection deleted");
+        delete[] buffer.buf; // context takes ownership of the buffer
+    }
+
+    SOCKET playerSocket = INVALID_SOCKET;
+    CONNECTION_CONTEXT_TYPE type = ACCEPT;
+    OVERLAPPED overlapped {};
     WSABUF buffer{};
-    WSAOVERLAPPED overlapped{};
-    SOCKET sAcceptSocket = INVALID_SOCKET;
-    SOCKET sListenSocket = INVALID_SOCKET;
 };
 
-DWORD WINAPI acceptingSocketCompletiontFunction(LPVOID lpParam);
-bool startupServerNetwork(SERVER_CONNECTION* serverConnection);
-void closeServerConnections(SERVER_CONNECTION* serverConnection);
-void closeConnection(QUEUED_CONNECTION_CONTEXT* connectionContext);
-bool sendDataToConnection(PacketBuffer* buffer, QUEUED_CONNECTION_CONTEXT* context);
+bool sendDataToConnection(PacketBuffer* buffer, SOCKET playerSocket);
 
+bool startupServerSocket();
+
+void closeServerSocket(HANDLE listenport);
+
+void closeConnection(PLAYER_CONNECTION_CONTEXT* context);
+
+void closeConnection(SOCKET* playerSocket);
 #endif //MINECRAFTSERVER_SERVER_CONNECTION_H

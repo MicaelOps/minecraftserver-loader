@@ -13,7 +13,7 @@ void Packet::writeToBuffer(PacketBuffer* packetBuffer) {
     std::cout << "Unsupported call to writeToBuffer";
 }
 
-void Packet::handlePacket(QUEUED_CONNECTION_CONTEXT* connectionContext){
+void Packet::handlePacket(SOCKET playerSocket){
     std::cout << "Unsupported call to serverHandle";
 }
 

@@ -1,20 +1,21 @@
 //
-// Created by Micael Cossa on 18/07/2025.
+// Created by Micael Cossa on 07/08/2025.
 //
 
-#include <winsock2.h>
+#include <memory>
 #include <mswsock.h>
 #include <ws2tcpip.h>
-#include "server_utils.h"
 #include "server_connection.h"
+#include "server_utils.h"
 #include "server_handler.h"
-
-#pragma comment(lib, "Ws2_32.lib")
 
 #define SHUTDOWN_KEY 0x203
 
-static LPFN_ACCEPTEX lpfnAcceptEx = nullptr;
 
+namespace {
+    LPFN_ACCEPTEX lpfnAcceptEx = nullptr;
+    concurrent_unordered_set<SOCKET> connections;
+}
 
 
 /**
@@ -28,34 +29,42 @@ static LPFN_ACCEPTEX lpfnAcceptEx = nullptr;
  * @param context
  * @param bytesRead
  */
-void proccessPacket(QUEUED_CONNECTION_CONTEXT* context, DWORD bytesRead) {
+void proccessPacket(PLAYER_CONNECTION_CONTEXT* context, DWORD bytesRead) {
 
 
-    PacketBuffer packetBuffer;
-    packetBuffer.buffer = context->buffer.buf;
-    packetBuffer.bufferSize = (int)context->buffer.len;
 
-    int packetSize = packetBuffer.readVarInt();
+    std::unique_ptr<PacketBuffer> packetBuffer = std::make_unique<ArrayPacketBuffer>(context->buffer.buf, bytesRead);
+
+    int packetSize = packetBuffer->readVarInt();
 
     if(bytesRead < packetSize) {
         printInfo("Need to perform more read to full ready this packet. Packet size: ",  packetSize , " Bytes Read: " , bytesRead);
         return;
     }
-    invokePacket(&packetBuffer, context);
+    invokePacket(packetBuffer.get(), context);
+
 }
 
-bool sendDataToConnection(PacketBuffer* buffer, QUEUED_CONNECTION_CONTEXT* context) {
+bool sendDataToConnection(PacketBuffer* buffer, SOCKET socket) {
 
-    auto* buf = new WSABUF;
-    buf->buf = buffer->buffer;
-    buf->len = buffer->bufferSize;
 
-    int result = WSASend(context->sAcceptSocket,
-                         buf,
+    // Setup pOverlapped
+    auto connection_context = new PLAYER_CONNECTION_CONTEXT;
+    SecureZeroMemory(connection_context, sizeof(PLAYER_CONNECTION_CONTEXT));
+
+    connection_context->playerSocket = socket;
+    connection_context->type = SEND;
+
+    connection_context->buffer.buf = buffer->getBuffer();
+    connection_context->buffer.len = buffer->getSize();
+
+
+    int result = WSASend(connection_context->playerSocket,
+                         &connection_context->buffer,
                          1,
                          nullptr,
                          MSG_OOB,
-                         &context->overlapped,
+                         &connection_context->overlapped,
                          nullptr);
 
     if(result == SOCKET_ERROR) {
@@ -63,27 +72,34 @@ bool sendDataToConnection(PacketBuffer* buffer, QUEUED_CONNECTION_CONTEXT* conte
         int error = WSAGetLastError();
 
         if(error != WSA_IO_PENDING){
-            printInfo("Unable to read data from socket ", WSAGetLastError());
+            printInfo("Unable to send data from socket ", WSAGetLastError());
             return false;
         }
     }
 
     return true;
 }
-bool readPacket(QUEUED_CONNECTION_CONTEXT* context) {
+bool readPacket(PLAYER_CONNECTION_CONTEXT* context) {
 
-    context->buffer.len = 512;
-    context->buffer.buf = new char[512];
+    // Setup pOverlapped
+    auto connection_context = new PLAYER_CONNECTION_CONTEXT;
+    SecureZeroMemory(connection_context, sizeof(PLAYER_CONNECTION_CONTEXT));
+
+    connection_context->playerSocket = context->playerSocket;
+    connection_context->type = RECEIVE;
+
     DWORD flags = MSG_PEEK;
 
+    connection_context->buffer.len = 512;
+    connection_context->buffer.buf = new char[512];
 
     // read the packet length
-    int result = WSARecv(context->sAcceptSocket,
-                         &context->buffer,
+    int result = WSARecv(connection_context->playerSocket,
+                         &connection_context->buffer,
                          1,
                          nullptr,
                          &flags,
-                         &context->overlapped,
+                         &connection_context->overlapped,
                          nullptr);
 
     if(result == SOCKET_ERROR) {
@@ -99,15 +115,26 @@ bool readPacket(QUEUED_CONNECTION_CONTEXT* context) {
     return true;
 }
 
-DWORD WINAPI acceptingSocketCompletiontFunction(LPVOID lpParam) {
+
+DWORD WINAPI  SocketCompletionThreadFunction(LPVOID param) {
+
+
+    if(param == nullptr) {
+        printInfo("Thread initialised with no params");
+        return -1;
+    }
 
     // Check the queue for completed accepted connections or others
+    auto* params = static_cast<IO_SERVER_CONNECTION_THREAD_PARAM*>(param);
+
     while(true) {
         DWORD NumBytesSent = 0;
         ULONG CompletionKey;
         LPOVERLAPPED Overlapped;
 
-        bool result = GetQueuedCompletionStatus((HANDLE)lpParam,
+
+
+        bool result = GetQueuedCompletionStatus(params->listenPort,
                                                 &NumBytesSent,
                                                 reinterpret_cast<PULONG_PTR>(&CompletionKey),
                                                 &Overlapped,
@@ -123,27 +150,40 @@ DWORD WINAPI acceptingSocketCompletiontFunction(LPVOID lpParam) {
             if(CompletionKey == SHUTDOWN_KEY)
                 break;
 
-            printInfo("Something happen to a connection in the port...");
+            printInfo("Something happened to a connection in the port...");
             continue;
         }
 
 
-        QUEUED_CONNECTION_CONTEXT* connectionContext = CONTAINING_RECORD(Overlapped, QUEUED_CONNECTION_CONTEXT, overlapped);
+        PLAYER_CONNECTION_CONTEXT* connectionContext = CONTAINING_RECORD(Overlapped, PLAYER_CONNECTION_CONTEXT, overlapped);
 
-        if(connectionContext->state == ACCEPT)  {
-            setsockopt( connectionContext->sAcceptSocket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *)&connectionContext->sListenSocket, sizeof(connectionContext->sListenSocket) );
-            connectionContext->connection->connections.insert(connectionContext->sAcceptSocket);
-            connectionContext->state = HANDSHAKING;
-            readPacket(connectionContext);
-        } else  {
+        if(connectionContext->type == ACCEPT)  {
+
+            setsockopt(connectionContext->playerSocket,
+                       SOL_SOCKET,
+                       SO_UPDATE_ACCEPT_CONTEXT,
+                       reinterpret_cast<const char *>(params->listenSocket),
+                       sizeof(params->listenSocket));
+
+
+            connections.insert(connectionContext->playerSocket);
+
+        } else if(connectionContext->type == RECEIVE)  {
             proccessPacket(connectionContext, NumBytesSent);
         }
+
+
+        readPacket(connectionContext);
+
+        delete connectionContext;
 
     }
     return 0;
 }
 
-bool acceptConnection(const SOCKET listenSocket, HANDLE port, SERVER_CONNECTION* connections) {
+
+
+bool acceptConnection(const SOCKET listenSocket, HANDLE port) {
     SOCKET AcceptSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (AcceptSocket == INVALID_SOCKET) {
         printInfo("Create of ListenSocket socket failed with error: ", WSAGetLastError());
@@ -154,8 +194,9 @@ bool acceptConnection(const SOCKET listenSocket, HANDLE port, SERVER_CONNECTION*
     DWORD bytesReceived = 0;
 
     // Setup pOverlapped
-    auto connection_context = new QUEUED_CONNECTION_CONTEXT;
-    SecureZeroMemory(connection_context, sizeof(QUEUED_CONNECTION_CONTEXT));
+    auto connection_context = new PLAYER_CONNECTION_CONTEXT;
+    SecureZeroMemory(connection_context, sizeof(PLAYER_CONNECTION_CONTEXT));
+
 
 
     auto result = lpfnAcceptEx(
@@ -179,9 +220,8 @@ bool acceptConnection(const SOCKET listenSocket, HANDLE port, SERVER_CONNECTION*
         }
     }
 
-    connection_context->connection = connections;
-    connection_context->sAcceptSocket = AcceptSocket;
-    connection_context->sListenSocket = listenSocket;
+    connection_context->type = ACCEPT;
+    connection_context->playerSocket = AcceptSocket;
 
     HANDLE acceptPort = CreateIoCompletionPort((HANDLE) AcceptSocket, port, (u_long) 0, 0);
 
@@ -194,14 +234,15 @@ bool acceptConnection(const SOCKET listenSocket, HANDLE port, SERVER_CONNECTION*
 
     return true;
 }
-bool startupServerNetwork(SERVER_CONNECTION* serverConnection) {
+
+
+bool startupServerSocket() {
     WSADATA wsadata;
 
     if (WSAStartup(MAKEWORD(2,2), &wsadata) == 1) {
         printInfo("Unable to start WSA ", WSAGetLastError());
         return false;
     }
-
 
     auto listenSocket = INVALID_SOCKET;
 
@@ -221,11 +262,13 @@ bool startupServerNetwork(SERVER_CONNECTION* serverConnection) {
     }
 
 
-    HANDLE hThread = CreateThread(nullptr, 0, acceptingSocketCompletiontFunction, listenPort, 0, nullptr);
+    IO_SERVER_CONNECTION_THREAD_PARAM threadparam = {listenSocket, listenPort};
+
+
+    HANDLE hThread = CreateThread(nullptr, 0, SocketCompletionThreadFunction, &threadparam, 0, nullptr);
     CloseHandle(hThread);
 
-    serverConnection->listenport = listenPort;
-    serverConnection->connections.insert(listenSocket);
+    connections.insert(listenSocket);
 
     sockaddr_in service{};
     service.sin_family = AF_INET;
@@ -247,9 +290,9 @@ bool startupServerNetwork(SERVER_CONNECTION* serverConnection) {
     DWORD bytesReturned;
 
     int iResult = WSAIoctl(listenSocket, SIO_GET_EXTENSION_FUNCTION_POINTER,
-                       &guidAcceptEx, sizeof (guidAcceptEx),
-                       &lpfnAcceptEx, sizeof (lpfnAcceptEx),
-                       &bytesReturned, nullptr, nullptr);
+                           &guidAcceptEx, sizeof (guidAcceptEx),
+                           &lpfnAcceptEx, sizeof (lpfnAcceptEx),
+                           &bytesReturned, nullptr, nullptr);
 
     if (iResult == SOCKET_ERROR) {
         printInfo(" WSAIoctl failed with error: ", WSAGetLastError());
@@ -259,7 +302,7 @@ bool startupServerNetwork(SERVER_CONNECTION* serverConnection) {
     }
     // Pre-load a pool of 20 connections
     for (int i = 0; i < 20; ++i) {
-        if(!acceptConnection(listenSocket, listenPort,serverConnection)){
+        if(!acceptConnection(listenSocket, listenPort)){
             printInfo("Failed to create accept Connection pool");
             return false;
         }
@@ -268,21 +311,28 @@ bool startupServerNetwork(SERVER_CONNECTION* serverConnection) {
     return true;
 }
 
-void closeConnection(QUEUED_CONNECTION_CONTEXT* connectionContext) {
-    connectionContext->connection->connections.remove(connectionContext->sAcceptSocket);
-    closesocket(connectionContext->sAcceptSocket);
-}
+void closeServerSocket(HANDLE listenport) {
 
-void closeServerConnections(SERVER_CONNECTION* serverConnection) {
-    printInfo("Shutting down connections...");
-    serverConnection->connections.for_each([](SOCKET sock) {
-        closesocket(sock);
+    connections.for_each([](SOCKET socket) {
+        closeConnection(&socket);
     });
 
-    serverConnection->connections.clear();
-    PostQueuedCompletionStatus(serverConnection->listenport, 0, SHUTDOWN_KEY, nullptr);
+    PostQueuedCompletionStatus(listenport, 0, SHUTDOWN_KEY, nullptr);
+
     printInfo("Waiting to clear network worker...");
+
     Sleep(3000); // Let all the thread shutdown
-    CloseHandle(serverConnection->listenport);
+
+    CloseHandle(listenport);
     WSACleanup();
+}
+
+void closeConnection(PLAYER_CONNECTION_CONTEXT* context) {
+    closeConnection(&context->playerSocket);
+}
+
+void closeConnection(SOCKET playerSocket) {
+    CancelIoEx((HANDLE)playerSocket, nullptr);
+    closesocket(playerSocket);
+    connections.remove(playerSocket);
 }

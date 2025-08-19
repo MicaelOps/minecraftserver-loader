@@ -7,21 +7,56 @@
 
 
 #include <string>
+#include <vector>
 
-struct PacketBuffer {
+class PacketBuffer {
 
-    int position = 0, bufferSize = 0, bytesUsed = 0;
-    char* buffer = nullptr;
+public:
 
+    virtual char* getBuffer();
 
-    int writeVarInt(int value);
-    int writeShort(unsigned short value);
-    int writeString(std::string& value);
+    virtual int getSize();
 
-    int readVarInt();
+    virtual int readVarInt();
 
-    void readjustBufferSize();
-    void allocateBuffer(int estimatedSize);
+    virtual void writeVarIntAttheBack(const int& value);
+
+    virtual void writeVarInt(const int& value);
+
+    virtual void writeByte(const char& byte);
+
+    virtual void writeShort(const unsigned short& value);
+
+    virtual void writeString(const std::string& value);
+
+ };
+
+class ArrayPacketBuffer : public virtual PacketBuffer {
+
+private:
+    char* buffer;
+    int size, position = 0;
+
+public:
+
+    explicit ArrayPacketBuffer(char* buffer, int size) : buffer(buffer) , size(size) {}
+    void reserve(size_t length);
+    char* getBuffer() override;
+    int getSize() override;
+    int readVarInt() override;
+};
+
+class VectorBuffer : public virtual PacketBuffer {
+
+private:
+    std::vector<char> buffer;
+
+public:
+    char* getBuffer() override;
+    int getSize() override;
+    void writeVarIntAttheBack(const int& value) override;
+    void writeVarInt(const int& value) override;
+    void writeString(const std::string& value)override;
 };
 
 

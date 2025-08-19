@@ -8,7 +8,7 @@
 #include "packets/packet.h"
 
 void setupPacketFactory();
-void invokePacket(PacketBuffer* packetBuffer, QUEUED_CONNECTION_CONTEXT* connectionContext);
-void sendPacket(Packet* packet, QUEUED_CONNECTION_CONTEXT* connectionContext);
+void invokePacket(PacketBuffer* packetBuffer, PLAYER_CONNECTION_CONTEXT* connectionContext);
+void sendPacket(Packet* packet, PLAYER_CONNECTION_CONTEXT* connectionContext);
 
 #endif //MINECRAFTSERVER_SERVER_HANDLER_H
