@@ -1,18 +1,8 @@
 # minecraft-gameserver
-C++ Minecraft server 
+C++ Minecraft server Loader
 
-A personal learning project to improve c++ expertise.
+This project is the executable to run the minecraft-gameserver project.
+Please read https://github.com/MicaelOps/minecraft-gameserver
 
-
-Main Goals:
-
-- Multithreaded world system
-- Implmenting Plugin system for c++ plugins
-- Learning network systems
-
-Needs & Wants:
-
-- Stress test
-- Hack my own server
   
 Documentation will be added later.
