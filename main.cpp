@@ -7,8 +7,6 @@
 #include "minecraft.h"
 
 
-bool close = false;
-
 void reloadPlugins();
 void loadPlugins();
 void unloadPlugins();
@@ -32,14 +30,12 @@ int main() {
 
     printInfo("Network setup completed. ");
 
-
     loadPlugins();
 
     std::string inputText;
 
-
     printInfo("Server has been successfully loaded, to list available commands type /help");
-    while(!close) {
+    while(true) {
         std::cin >> inputText;
 
         if(inputText == "stop")
@@ -60,11 +56,11 @@ void unloadPlugins() {
 
     for(const auto& plugin : plugins)  {
 
-#ifdef _WIN32
-        FreeLibrary(plugin);
-#else
-        dlclose(plugin);
-#endif
+    #ifdef _WIN32
+            FreeLibrary(plugin);
+    #else
+            dlclose(plugin);
+    #endif
     }
 }
 void loadPlugins() {
@@ -84,19 +80,20 @@ void loadPlugins() {
     for(const auto& entry : directory_iterator(pluginsFolder)) {
 
         std::string pathname = entry.path().string();
-#ifdef _WIN32
 
-        if (!pathname.ends_with(".dll"))
-            continue;
+        #ifdef _WIN32
 
-        auto handle = LoadLibraryA(pathname.c_str());
+                if (!pathname.ends_with(".dll"))
+                    continue;
 
-#else
-        if (!pathname.ends_with(".so"))
-            continue;
+                auto handle = LoadLibraryA(pathname.c_str());
 
-        auto handle = dlopen(pathname.c_str(), RTLD_NOW);
-#endif
+        #else
+                if (!pathname.ends_with(".so"))
+                    continue;
+
+                auto handle = dlopen(pathname.c_str(), RTLD_NOW);
+        #endif
 
         if(handle == nullptr) {
             printInfo("Unable to load ", pathname, " is this a valid Shared Library?");
